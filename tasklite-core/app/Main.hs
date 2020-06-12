@@ -163,6 +163,10 @@ data Command
 
   deriving (Show, Eq)
 
+data CliArgs = CliArgs
+  { cliCommand :: Command
+  , useExperimentalMailParser :: Bool } 
+
 
 nameToAliasList :: [(Text, Text)]
 nameToAliasList = (
@@ -725,9 +729,19 @@ commandParser conf =
     )
   )
 
+experimentalMailSwitchParser :: Parser Bool
+experimentalMailSwitchParser =
+  switch 
+    ( long "--use-experimental-mail-parser"
+    <> help "Enable experimental mail parser")
 
-commandParserInfo :: Config -> ParserInfo Command
-commandParserInfo conf =
+cliArgsParser :: Config -> Parser CliArgs
+cliArgsParser conf = CliArgs
+  <$> commandParser conf
+  <*> experimentalMailSwitchParser
+
+parserInfo :: Config -> ParserInfo CliArgs
+parserInfo conf =
   let
     versionDesc =
       "Version "
@@ -735,7 +749,7 @@ commandParserInfo conf =
       <> ", developed by <adriansieber.com>"
   in
     info
-      (helper <*> commandParser conf)
+      (helper <*> cliArgsParser conf)
       (noIntersperse
         <> briefDesc
         <> headerDoc (Just "{{header}}")
@@ -831,7 +845,7 @@ helpText conf =
       & hcat
   in
     case
-      (parserFailure defaultPrefs (commandParserInfo conf) ShowHelpText mempty)
+      (parserFailure defaultPrefs (parserInfo conf) ShowHelpText mempty)
     of
       ParserFailure a -> case a "tasklite" of
         (theHelp, _, _) -> extendHelp theHelp
@@ -997,14 +1011,13 @@ printOutput appName config = do
   preLaunchResult <- executeHooks "" (configNorm & hooks & launch & pre)
   putDoc preLaunchResult
 
-  cliCommand <- execParser $ commandParserInfo configNorm
+  cliArgs <- execParser $ parserInfo configNorm
 
   connection <- setupConnection configNorm
   -- TODO: Integrate into migrations
   tableStatus <- createTables configNorm connection
   migrationsStatus <- runMigrations configNorm connection
   nowElapsed <- timeCurrentP
-
   let
     now = timeFromElapsedP nowElapsed :: DateTime
 
@@ -1014,7 +1027,7 @@ printOutput appName config = do
     (configNorm & hooks & launch & post)
   putDoc postLaunchResult
 
-  doc <- executeCLiCommand configNorm now connection cliCommand
+  doc <- executeCLiCommand configNorm now connection (cliCommand cliArgs)
 
   -- TODO: Use withConnection instead
   close connection
